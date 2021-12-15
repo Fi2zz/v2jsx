@@ -78,8 +78,7 @@ module.exports = (template) => {
 			} else if (/v-show/.test(name)) {
 				state.style.push("{ display: " + value + " ? '' : 'none' }");
 			} else if (/v-model/.test(name)) {
-				state.domProps.value = value;
-				state.props.onInput = `(event)=>{ value =event.target.value  }`;
+				state.directives.push({ name: "vModel", value });
 			}
 			//  directive
 			else if (/v-[a-zA-Z]/.test(name)) {
@@ -89,7 +88,6 @@ module.exports = (template) => {
 			} else if (name == "style") {
 				state.style.push(prop.value);
 			} else {
-				// console.log({ name,value:prop.value });
 				state.attrs[name] = value;
 			}
 		});
@@ -116,21 +114,12 @@ module.exports = (template) => {
 			const slot = state.scopedSlots[key];
 			scopedSlots += `${key}:${slot},`;
 		}
-		// console.log({ scopedSlots: node.scopedSlots, sate: state.scopedSlots });
 		if (scopedSlots) attributes.push(`scopedSlots= {{${scopedSlots}}}`);
 		if (state.style.length) attributes.push(`style={assign(${state.style})}`);
 		if (state.class.length) attributes.push(`class={assign(${state.class})}`);
 		//  props
-		for (const key in state.props) {
-			let value = state.props[key];
-			if (value == '""') {
-				value = true;
-			}
-			if (value != true) {
-				attributes.push(`${key}={${value}}`);
-			} else {
-				attributes.push(key);
-			}
+		if (Object.values(state.props).length) {
+			attributes.push(`props={${JSON.stringify(state.props)}}`);
 		}
 		//  attrs
 		for (const key in state.attrs) {
@@ -144,12 +133,10 @@ module.exports = (template) => {
 				attributes.push(key);
 			}
 		}
-		let domProps = "";
-		for (const key in state.domProps) {
-			domProps += `${key}:${state.domProps[key]},`;
+		if (Object.values(state.domProps).length > 0) {
+			attributes.push(`domProps={${JSON.stringify(state.domProps)}}`);
 		}
-		if (domProps) attributes.push(`domProps={{${domProps}}}`);
-		for (let { name, value } of state.directives) {
+		for (const { name, value } of state.directives) {
 			attributes.push(`${name}={${value}}`);
 		}
 		return attributes.join(" ");
