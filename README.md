@@ -2,7 +2,7 @@
 
 Transform Vue 2 SFC template part to JSX,
 
-Inspired by `vue-tepmlate-compiler`
+Inspired by `vue-template-compiler`
 
 ## Install
 
