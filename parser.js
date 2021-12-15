@@ -1,11 +1,31 @@
-// compiler/helpers.js
-var emptyObject = Object.freeze({});
-var onRE = /^@|^v-on:/;
-var dirRE = /^v-|^@|^:|^\.|^#/;
-var bindRE = /^:|^\.|^v-bind:/;
-var warn = function (msg) {
-	console.error(`[Vue compiler]: ${msg}`);
-};
+const onRE = /^@|^v-on:/;
+const dirRE = /^v-|^@|^:|^\.|^#/;
+const bindRE = /^:|^\.|^v-bind:/;
+const unicodeRegExp =
+	/a-zA-Z\u00B7\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u037D\u037F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD/;
+const attribute =
+	/^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/;
+const dynamicArgAttribute =
+	/^\s*((?:v-[\w-]+:|@|:|#)\[[^=]+?\][^\s"'<>\/=]*)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/;
+const ncname = `[a-zA-Z_][\\-\\.0-9_a-zA-Z${unicodeRegExp.source}]*`;
+const qnameCapture = `((?:${ncname}\\:)?${ncname})`;
+const startTagOpen = new RegExp(`^<${qnameCapture}`);
+const startTagClose = /^\s*(\/?)>/;
+const endTag = new RegExp(`^<\\/${qnameCapture}[^>]*>`);
+const comment = /^<!\--/;
+const defaultTagRE = /\{\{((?:.|\r?\n)+?)\}\}/g;
+const newSlotRE = /^v-slot(:|$)|^#/;
+const htmlTagRE = /\<(.*\>)/g;
+const oldSlotRE = /:slot|v-bind:slot|^slot$/;
+const forAliasRE = /([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/;
+const forIteratorRE = /,([^,\}\]]*)(?:,([^,\}\]]*))?$/;
+const stripParensRE = /^\(|\)$/g;
+
+const isPlainTextElement = makeMap("script,style,textarea", true);
+const isUnaryTag = makeMap(
+	"area,base,br,col,embed,frame,hr,img,input,isindex,keygen,link,meta,param,source,track,wbr",
+	true
+);
 function createText(type, text) {
 	return { type, text };
 }
@@ -25,27 +45,21 @@ function createElement(tag, attrs, parent) {
 		parent,
 		children: [],
 		props,
-		forbiden: tag == "script" || tag == "style",
 		ifConditions: [],
+		scopedSlots: {},
 	};
 }
-function makeMap(str, expectsLowerCase) {
-	var map = Object.create(null);
-	var list = str.split(",");
-	for (var i = 0; i < list.length; i++) {
-		map[list[i]] = true;
-	}
-	return expectsLowerCase
-		? function (val) {
-				return map[val.toLowerCase()];
-		  }
-		: function (val) {
-				return map[val];
-		  };
+function makeMap(str) {
+	const map = str.split(",").reduce((acc, item) => {
+		acc[item.toLowerCase()] = true;
+		return acc;
+	}, Object.create(null));
+
+	return function (val) {
+		return map[val.toLowerCase()];
+	};
 }
-var forAliasRE = /([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/;
-var forIteratorRE = /,([^,\}\]]*)(?:,([^,\}\]]*))?$/;
-var stripParensRE = /^\(|\)$/g;
+
 function parseFor(exp) {
 	const inMatch = exp.match(forAliasRE);
 	if (!inMatch) return;
@@ -76,26 +90,25 @@ function findProp(el, nameOrRE, remove) {
 	return raw ? { raw, value, name } : null;
 }
 
-// compiler/html.js
-var unicodeRegExp =
-	/a-zA-Z\u00B7\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u037D\u037F-\u1FFF\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF\uFDF0-\uFFFD/;
-var attribute =
-	/^\s*([^\s"'<>\/=]+)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/;
-var dynamicArgAttribute =
-	/^\s*((?:v-[\w-]+:|@|:|#)\[[^=]+?\][^\s"'<>\/=]*)(?:\s*(=)\s*(?:"([^"]*)"+|'([^']*)'+|([^\s"'=<>`]+)))?/;
-var ncname = `[a-zA-Z_][\\-\\.0-9_a-zA-Z${unicodeRegExp.source}]*`;
-var qnameCapture = `((?:${ncname}\\:)?${ncname})`;
-var startTagOpen = new RegExp(`^<${qnameCapture}`);
-var startTagClose = /^\s*(\/?)>/;
-var endTag = new RegExp(`^<\\/${qnameCapture}[^>]*>`);
-var comment = /^<!\--/;
-var isPlainTextElement = makeMap("script,style,textarea", true);
-var reCache = {};
+function processProp(el, name, next) {
+	for (let index = 0; index < el.props.length; index++) {
+		let prop = el.props[index];
+		if (name == prop.name) {
+			if (typeof next == "function" && prop.value) {
+				const result = next(prop.value, prop.raw, el);
+				if (result) {
+					el.props[index] = { ...prop, ...result, name };
+				}
+			}
+		}
+	}
+}
+
 function parseHTML(options) {
 	const stack = [];
 	let index = 0;
 	let last, lastTag;
-	let html = options.template;
+	let html = options.template.trim();
 	while (html) {
 		last = html;
 		if (!lastTag || !isPlainTextElement(lastTag)) {
@@ -146,12 +159,10 @@ function parseHTML(options) {
 		} else {
 			let endTagLength = 0;
 			const stackedTag = lastTag.toLowerCase();
-			const reStackedTag =
-				reCache[stackedTag] ||
-				(reCache[stackedTag] = new RegExp(
-					"([\\s\\S]*?)(</" + stackedTag + "[^>]*>)",
-					"i"
-				));
+			const reStackedTag = new RegExp(
+				"([\\s\\S]*?)(</" + stackedTag + "[^>]*>)",
+				"i"
+			);
 			const rest = html.replace(reStackedTag, function (all, text, endTag2) {
 				endTagLength = endTag2.length;
 				options.chars(text);
@@ -162,12 +173,7 @@ function parseHTML(options) {
 			parseEndTag(stackedTag, index - endTagLength, index);
 		}
 		if (html === last) {
-			options.chars && options.chars(html);
-			if (!stack.length && options.warn) {
-				options.warn(`Mal-formatted tag at end of template: "${html}"`, {
-					start: index + html.length,
-				});
-			}
+			options.chars(html);
 			break;
 		}
 	}
@@ -251,15 +257,7 @@ function parseHTML(options) {
 		}
 		if (pos >= 0) {
 			for (let i = stack.length - 1; i >= pos; i--) {
-				if ((i > pos || !tagName) && options.warn) {
-					options.warn(`tag <${stack[i].tag}> has no matching end tag.`, {
-						start: stack[i].start,
-						end: stack[i].end,
-					});
-				}
-				if (options.end) {
-					options.end(stack[i].tag, start, end);
-				}
+				options.end(stack[i].tag, start, end);
 			}
 			stack.length = pos;
 			lastTag = pos && stack[pos - 1].tag;
@@ -277,16 +275,12 @@ function parseHTML(options) {
 		}
 	}
 }
-
-// compiler/index.js
-var defaultTagRE = /\{\{((?:.|\r?\n)+?)\}\}/g;
-var slotRE = /^v-slot(:|$)|^#/;
-var dynamicArgRE = /^\[.*\]$/;
-var emptySlotScopeToken = `_empty_`;
 function processElement(element) {
+	processProp(element, "v-bind:ref", (ref) => ({
+		value: { ref, refInFor: checkInFor(element) },
+	}));
 	processIf(element);
 	processSlotContent(element);
-	processSlotOutlet(element);
 	return element;
 }
 function processIf(el) {
@@ -318,89 +312,69 @@ function findPrevElement(children) {
 		if (children[i].type === 1) {
 			return children[i];
 		} else {
-			if (children[i].text !== " ") {
-				warn(
-					`text "${children[
-						i
-					].text.trim()}" between v-if and v-else(-if) will be ignored.`,
-					children[i]
-				);
-			}
 			children.pop();
 		}
 	}
 }
+
+function checkInFor(el) {
+	var parent = el;
+	while (parent) {
+		if (parent.for !== undefined) return true;
+		parent = parent.parent;
+	}
+	return false;
+}
+
 function processSlotContent(el) {
-	const attrSlot = findProp(el, "slot", true);
-	const attrSlotScope = findProp(el, "slot-scope", true);
-	if (attrSlot) {
-		const msg =
-			`<${el.tag} ${attrSlot.raw} slot-scope/>, is deprecated, use <${el.tag} v-slot:${attrSlot.value}{scope} />`
-				.replace("slot-scope", !attrSlotScope ? "" : attrSlotScope.raw)
-				.replace(
-					"{scope}",
-					!attrSlotScope ? "" : "={" + attrSlotScope.value + "}"
-				);
-		warn(msg);
-		return;
+	let oldSlotSyntax = findProp(el, oldSlotRE, true);
+	const attrSlotScope = findProp(el, /slot-scope/, true);
+	const scope = attrSlotScope?.value ?? "";
+	if (scope && !oldSlotSyntax) {
+		oldSlotSyntax = {
+			value: '"default"',
+		};
 	}
-	const bound = findProp(el, "v-bind:slot", true);
-	if (bound) {
-		const msg = `<${el.tag} ${bound.raw}/>  is deprecated`;
-		warn(msg);
-		return;
-	}
-	const slotBinding = findProp(el, slotRE);
-	if (!slotBinding) return;
-	const { name } = getSlotName(slotBinding);
-	if (el.tag === "template") {
-		el.slotTarget = name;
-		el.slotScope = slotBinding.value || emptySlotScopeToken;
-	} else {
-		if (true) {
-			if (el.slotScope || el.slotTarget) {
-				warn(`Unexpected mixed usage of different slot syntaxes.`, el);
-			}
-			if (el.scopedSlots) {
-				warn(
-					`To avoid scope ambiguity, the default slot should also use <template> syntax when there are other named slots.`,
-					slotBinding
-				);
-			}
+	if (oldSlotSyntax) {
+		const name = oldSlotSyntax.value || "default";
+		if (el.tag != "template") {
+			const slots = el.scopedSlots;
+			slots[name] = createElement("template", [], el);
+			const slotContainer = slots[name];
+			slotContainer.slotTarget = name;
+			slotContainer.slotScope = scope;
+		} else {
+			el.slotTarget = name;
+			el.slotScope = scope;
 		}
-		const slots = el.scopedSlots || (el.scopedSlots = {});
-		const { name: name2, dynamic } = getSlotName(slotBinding);
-		const slotContainer = (slots[name2] = createElement("template", [], el));
-		slotContainer.slotTarget = name2;
-		slotContainer.slotTargetDynamic = dynamic;
+		return;
+	}
+	const slotBinding = findProp(el, newSlotRE);
+	if (!slotBinding) return;
+	const slotName = getSlotName(slotBinding);
+	if (el.tag === "template") {
+		el.slotTarget = slotName;
+		el.slotScope = slotBinding.value;
+	} else {
+		const slots = el.scopedSlots;
+		slots[slotName] = createElement("template", [], el);
+		const slotContainer = slots[slotName];
+		slotContainer.slotTarget = slotName;
 		slotContainer.children = el.children.filter((child) => {
 			if (!child.slotScope) {
 				child.parent = slotContainer;
 				return true;
 			}
 		});
-		slotContainer.slotScope = slotBinding.value || emptySlotScopeToken;
+		slotContainer.slotScope = slotBinding.value;
 		el.children = [];
 	}
 }
 function getSlotName(binding) {
-	let name = binding.name.replace(slotRE, "");
-	if (!name) {
-		if (binding.name[0] !== "#") {
-			name = "default";
-		} else if (true) {
-			warn(`v-slot shorthand syntax requires a slot name.`, binding);
-		}
-	}
-	return dynamicArgRE.test(name)
-		? { name: name.slice(1, -1), dynamic: true }
-		: { name: `"${name}"`, dynamic: false };
-}
-function processSlotOutlet(el) {
-	if (el.tag === "slot") {
-		const prop = findProp(el, "name");
-		el.slotName = prop.value || "default";
-	}
+	let name = binding.name.replace(newSlotRE, "");
+	if (!name && binding.name[0] !== "#") name = "default";
+	name = name.replace(/^(\[)/, "").replace(/(\])$/, "");
+	return JSON.stringify(name);
 }
 function processFor(el) {
 	var exp = findProp(el, "v-for", true);
@@ -412,7 +386,7 @@ function processFor(el) {
 		}
 	}
 }
-module.exports = function parse(template, options = {}) {
+exports.parse = function parse(template, options = {}) {
 	const stack = [];
 	let root;
 	let currentParent;
@@ -427,15 +401,17 @@ module.exports = function parse(template, options = {}) {
 				});
 			}
 		}
-		if (currentParent && !element.forbidden) {
+		if (currentParent && !["style", "script"].includes(element.tag)) {
 			if (element.elseif || element.else) {
 				processIfConditions(element, currentParent);
 			} else {
 				if (element.slotScope) {
 					const name = element.slotTarget || '"default"';
-					(currentParent.scopedSlots || (currentParent.scopedSlots = {}))[
-						name
-					] = element;
+
+					if (!currentParent.scopedSlots) {
+						currentParent.scopedSlots = {};
+					}
+					currentParent.scopedSlots[name] = element;
 				}
 				currentParent.children.push(element);
 				element.parent = currentParent;
@@ -496,11 +472,63 @@ module.exports = function parse(template, options = {}) {
 		}
 	};
 	parseHTML({
-		template: template.trim(),
+		template,
 		start: onStart,
 		end: onEnd,
 		chars: onChars,
-		comment() {},
 	});
 	return root;
+};
+
+function capitalize(string) {
+	return `${string}`.replace(/[A-Za-z]/, (partial, index) =>
+		index === 0 ? partial?.toUpperCase() : partial
+	);
+}
+
+exports.capitalize = capitalize;
+exports.isUnaryTag = isUnaryTag;
+exports.camelize = function camelize(string) {
+	if (!/^[a-zA-Z]{1,}\-/.test(string)) return string;
+	const result = string.replace(/-(\w)/g, function (_, c) {
+		return c ? c.toUpperCase() : "";
+	});
+	return capitalize(result);
+};
+exports.parseText = function parseText(text) {
+	if (htmlTagRE.test(text)) return text;
+	const defaultTagRE = /\{((?:.|\r?\n)+?)\}/g;
+	if (!defaultTagRE.test(text)) return text;
+	const delimiters = ",";
+	function stringifyValue(value) {
+		if (value == " ") value = "";
+		return JSON.stringify(value.replace(/(\n+)?(\t+)?/, ""));
+	}
+	const tokens = [];
+	let lastIndex = (defaultTagRE.lastIndex = 0);
+	let match, index, tokenValue;
+	while ((match = defaultTagRE.exec(text))) {
+		index = match.index;
+		// push text token
+		if (index > lastIndex) {
+			tokenValue = text.slice(lastIndex, index);
+			tokens.push(stringifyValue(tokenValue));
+		}
+		// tag token
+		const exp = match[1].trim();
+		tokens.push(exp);
+		lastIndex = index + match[0].length;
+	}
+	if (lastIndex < text.length) {
+		tokenValue = text.slice(lastIndex);
+		tokens.push(stringifyValue(tokenValue));
+	}
+	return typeof delimiters != "undefined"
+		? tokens.filter((x) => x.length).join(delimiters)
+		: tokens;
+};
+
+exports.removeTextTag = function removeTag(text) {
+	//  {{vars}} => {vars}
+	return text.replace(/\{\{/g, "{").replace(/\}\}/g, "}");
 };
