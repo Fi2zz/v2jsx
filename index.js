@@ -89,7 +89,8 @@ module.exports = (template) => {
 			} else if (name == "style") {
 				state.style.push(prop.value);
 			} else {
-				state.attrs[name] = JSON.stringify(prop.value);
+				// console.log({ name,value:prop.value });
+				state.attrs[name] = value;
 			}
 		});
 		const scopes = node.scopedSlots || {};
@@ -138,7 +139,7 @@ module.exports = (template) => {
 				value = true;
 			}
 			if (value != true) {
-				attributes.push(`${key}={${value}}`);
+				attributes.push(`${key}='${value}'`);
 			} else {
 				attributes.push(key);
 			}

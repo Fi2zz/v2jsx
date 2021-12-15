@@ -4,6 +4,51 @@ Transform Vue 2 SFC template part to JSX,
 
 Inspired by `vue-tepmlate-compiler`
 
+## Install
+
+```bash
+
+        npm install v2jsx
+        # or
+        yarn add v2jsx
+```
+
+## Use
+
+```js
+const v2jsx = require("v2jsx");
+const vueTemplate = `
+    <div>
+        <div id="hello" :class="{test:true}" class="core">  
+            {{some.text}}
+        </div> 
+        <some-component/>
+    </div>
+`;
+const result = v2jsx(vueTemplate);
+console.log(result.code);
+
+// function assign(target, ...source) {
+//   const _source = [...source];
+//   if (_source.length <= 1) return target;
+//   for (const item of _source) {
+//     if (typeof item != "object") continue;
+//     if (Array.isArray(item)) {
+//       assign(target, ...item);
+//     } else {
+//       Object.assign(target, item);
+//     }
+//   }
+//   return target;
+// }
+// <div>
+//   <div class={assign({ test: true }, "core")} id={'"hello"'}>
+//     {some.text}
+//   </div>
+//   <SomeComponent></SomeComponent>
+// </div>;
+```
+
 ## Where is `this` binding
 
 Unfortunately, we cannot determine `this` binding from the template,
@@ -72,7 +117,7 @@ function assign(target, ...source) {
 	return target;
 }
 <div class={assign("test", { testComponent: true })}>
-	<img alt={'"Vue logo"'} src={"../assets/logo.png"} />
+	<img alt="Vue logo" src="../assets/logo.png" />
 	<HelloWorld
 		scopedSlots={{
 			hello: ({ hello }) => [
@@ -83,7 +128,7 @@ function assign(target, ...source) {
 			],
 			jello: () => [jello],
 		}}
-		msg={'"Hello Vue 3 + Vite"'}>
+		msg="Hello Vue 3 + Vite">
 		<div scopedSlots={{ jello: ({ jello }) => null }}>
 			{jello} {slotdata.name}
 		</div>
@@ -91,7 +136,7 @@ function assign(target, ...source) {
 	{ifCondition ? (
 		ifCondition
 	) : elseIfCondition ? (
-		<div class={assign(hello)} id={'"123"'}>
+		<div class={assign(hello)} id="123">
 			elseIfCondition
 		</div>
 	) : (

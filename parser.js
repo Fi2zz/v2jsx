@@ -36,7 +36,8 @@ function createElement(tag, attrs, parent) {
 		let name = attr.name;
 		let value = attr.value;
 		name = name.replace(bindRE, "v-bind:").replace(onRE, "v-on:");
-		if (!dirRE.test(value)) value = JSON.stringify(value);
+		if (!dirRE.test(value) || value.startsWith("."))
+			value = JSON.stringify(value);
 		props.push({ name, value, raw });
 	}
 	return {
