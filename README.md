@@ -18,34 +18,89 @@ Inspired by `vue-template-compiler`
 ```js
 const v2jsx = require("v2jsx");
 const vueTemplate = `
-    <div>
-        <div id="hello" :class="{test:true}" class="core">  
-            {{some.text}}
-        </div> 
-        <some-component/>
-    </div>
+   <div class="root" v-show="rootShow">
+		<div id="hello" :class="{ test: true }" class="core">
+			{{ some.text }}
+		</div>
+		<some-component v-bind="someProps" />
+
+		<template v-slot:some-sloe>
+
+			v-slot 
+
+		</template>
+		<div v-show="visible" style="display: flex"></div>
+		<div>
+			<h3>v-model</h3>
+			<input v-model="vmodel" />
+		</div>
+		<div>
+			<h3>v-html</h3>
+			<div v-html="someHTML"></div>
+		</div>
+
+		<div>
+			<h3>v-text</h3>
+			<div v-text="someText"></div>
+		</div>
+		<div>
+			<h3>v-if</h3>
+			<div v-if="ifCondition">v-if directive</div>
+		</div>
+		<div>
+			<h3>v-if & v-else</h3>
+
+			<div v-if="ifC2">v-if</div>
+			<div v-else>v-else</div>
+		</div>
+		<div>
+			<h3>v-if & v-else-if & v-else</h3>
+			<div v-if="ifCondition2">v-if directive 2</div>
+			<div v-else-if="ifCondition3">v-else-if directive 3</div>
+			<div v-else>v-else</div>
+		</div>
+	</div>
 `;
 const result = v2jsx(vueTemplate);
 console.log(result.code);
 
-// function assign(target, ...source) {
-//   const _source = [...source];
-//   if (_source.length <= 1) return target;
-//   for (const item of _source) {
-//     if (typeof item != "object") continue;
-//     if (Array.isArray(item)) {
-//       assign(target, ...item);
-//     } else {
-//       Object.assign(target, item);
-//     }
-//   }
-//   return target;
-// }
-// <div>
-//   <div class={assign({ test: true }, "core")} id={'"hello"'}>
+// <div style={[{ display: rootShow ? "" : "none" }]} class={["root"]}>
+//   <div class={[{ test: true }, "core"]} id="hello">
 //     {some.text}
 //   </div>
-//   <SomeComponent></SomeComponent>
+//   <SomeComponent props={someProps} />
+//   "v-slot"
+//   <div style={["display: flex", { display: visible ? "" : "none" }]} />
+//   <div>
+//     <h3>v-model</h3>
+//     <input vModel={vmodel} />
+//   </div>
+//   <div>
+//     <h3>v-html</h3>
+//     <div domProps={{ innerHTML: someHTML }} />
+//   </div>
+//   <div>
+//     <h3>v-text</h3>
+//     <div domProps={{ textContent: someText }} />
+//   </div>
+//   <div>
+//     <h3>v-if</h3>
+//     {ifCondition ? <div>v-if directive</div> : null}
+//   </div>
+//   <div>
+//     <h3>v-if & v-else</h3>
+//     {ifC2 ? <div>v-if</div> : <div>v-else</div>}
+//   </div>
+//   <div>
+//     <h3>v-if & v-else-if & v-else</h3>
+//     {ifCondition2 ? (
+//       <div>v-if directive 2</div>
+//     ) : ifCondition3 ? (
+//       <div>v-else-if directive 3</div>
+//     ) : (
+//       <div>v-else</div>
+//     )}
+//   </div>
 // </div>;
 ```
 

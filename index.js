@@ -1,215 +1,163 @@
 const prettier = require("prettier");
-const {
-	isUnaryTag,
-	camelize,
-	parseText,
-	removeTextTag,
-	parse,
-} = require("./parser");
-const dJSON = require("dirty-json");
-const assign = `
-	function assign(target, ...source) {
-	const _source = [...source];
-	if(_source.length<=1) return target
-	for (const item of _source) {
-		if (typeof item != "object") continue;
-		if (Array.isArray(item)) {
-			assign(target, ...item);
-		} else {
-			Object.assign(target, item);
-		}
+const { parseTemplate } = require("./parseTemplate");
+const { parseText } = require("./parseText");
+const { isReservedTag, camelize } = require("./helpers");
+function stringifyAttributes(object, attributesType = "string", wrap = true) {
+	if (!object) return null;
+	const entries = Object.entries(object).filter((x) => x.length);
+	if (!entries.length) return null;
+	let joiner = " ";
+	let sep = "=";
+	if (attributesType == "object") {
+		sep = ":";
+		joiner = ",";
+		wrap = false;
 	}
-	return target;
-}`;
+	function genExpression([key, value]) {
+		return `{key}{sep}{value}`
+			.replace("{key}", key)
+			.replace("{sep}", value ? sep : "")
+			.replace("{value}", value ? (wrap ? `{${value}}` : value) : "");
+	}
+	return entries.map(genExpression).join(joiner);
+}
+function generateAttributes(node) {
+	if (!node || !node.tag) return "";
+
+	const attributes = [];
+	const events = stringifyAttributes(node.events);
+	const props = stringifyAttributes(node.props);
+	const attrs = stringifyAttributes(node.attrs, "string", false);
+	const domProps = stringifyAttributes(node.domProps, "object");
+	const directives = stringifyAttributes(node.directives);
+	const scopedSlots = transformScopedSlots(node);
+	if (node.style.length) attributes.push(`style={[${node.style}]}`);
+	if (node.class.length) attributes.push(`class={[${node.class}]}`);
+	if (events) attributes.push(events);
+	if (attrs) attributes.push(attrs);
+	if (props) attributes.push(props);
+	if (domProps) attributes.push(`domProps={{${domProps}}}`);
+	if (node.ref) attributes.push(`ref={${node.ref}}`);
+	if (node.refInFor) attributes.push("refInfor");
+	if (node.key) attributes.push(`key={${node.key}}`);
+	if (node.slot) attributes.push(`slot={${node.slot}}`);
+	if (node.boundProps) attributes.push(`props={${node.boundProps}}`);
+	if (directives) attributes.push(directives);
+	if (scopedSlots) attributes.push(`scopedSlots={{${scopedSlots}}}`);
+	return attributes.join(" ");
+}
+
+function transformFor(node) {
+	const noIterator2 = node.iterator2 == undefined;
+	const noIterator1 = node.iterator1 == undefined;
+	const template = `{for}.map((props,$_index)=>{{callback}})`;
+	const alias = `var ${node.alias}  = props;`;
+	const iterator2 = (!noIterator2 && `var ${node.iterator2} = $_index;`) || "";
+	const iterator1 = (!noIterator1 && `var ${node.iterator1} = $_index;`) || "";
+	const fn = `{alias}\n{iterator1}\n{iterator2}\nreturn({tag})`
+		.replace("{alias}", alias)
+		.replace("{iterator1}", iterator1)
+		.replace("{iterator2}", iterator2)
+		.replace("{tag}", jsxify(node));
+	return template.replace(/\{for\}/g, node.for).replace(/\{callback\}/, fn);
+}
+function transformIf(node) {
+	let hasElse = false;
+	const condtions = [];
+	for (let block of node.ifConditions) {
+		const el = jsxify(block);
+		const text = parseText(el, "+", null);
+		if (block.if != null) {
+			condtions.push(block.if, "?", text);
+		} else if (block.elseif != null) {
+			condtions.push(":", block.elseif, "?", text);
+		} else if (block.else != null) {
+			condtions.push(":", text);
+		}
+		hasElse = block.else != null;
+	}
+	// v-if && v-else  |  v-if
+	if (!hasElse || condtions.length == 1) condtions.push(":", "null");
+	return condtions.join("");
+}
+function transform(node, stringify = true) {
+	const children = ((Array.isArray(node) ? node : node.children) || [])
+		.map((node) => {
+			if (!node) return null;
+			if (typeof node == "string") return node;
+			if (node.type == 1 && !node.tag) return null;
+			if (node.type == 1 && node.tag == "slot") return transformSlot(node);
+			//  vue@2x don't have fragment syntax
+			if (node.type == 1 && node.tag == "template" && !node.if) {
+				return jsxify(node, stringify);
+			}
+			if (node.type == 2) return node.text;
+			if (node.type == 3) return parseText(node.text, ",", node.parent?.tag);
+			if (node.for) return `{${transformFor(node)}}`;
+			if (node.if) return `{${transformIf(node)}}`;
+			return jsxify(node);
+		})
+		.filter(Boolean);
+	return stringify ? children.join("\n") || null : children;
+}
+function transformSlot(node) {
+	const { slotName, props, attrs } = node;
+	if (!slotName) return "";
+	const _scope = stringifyAttributes({ ...props, ...attrs }, "object");
+	const scope = _scope ? `{${_scope}}` : null;
+	const slot = !scope
+		? `$slots[${slotName}]`
+		: `$scopedSlots[${slotName}](${scope})`;
+	const children = jsxify(node, false).map((node) =>
+		parseText(node, ",", true)
+	);
+	if (!children.length) return `{${slot}}`;
+	const code = `{${slot} || [${children}]}`;
+	return code.trim();
+}
+function transformScopedSlots(node) {
+	if (!node.scopedSlots) return null;
+	if (node.scopedSlots?.default) node.children = [];
+	const entries = Object.entries(node.scopedSlots);
+	if (!entries.length) return null;
+	function jsx(slot) {
+		const element = jsxify(slot, false);
+		return typeof element == "string"
+			? element
+			: element.map((x) => x.replace(/^\{/, "").replace(/\}$/, ""));
+	}
+	return entries.map(
+		([name, slot]) => `${name}:(${slot.slotScope})=>([${jsx(slot)}])`
+	);
+}
+
+function jsxify(node, stringify = true) {
+	if (node.tag != "template" && node.tag != "slot") {
+		const tag = isReservedTag(node.tag) ? node.tag : camelize(node.tag);
+		const attrs = generateAttributes(node);
+		const children = transform(node, stringify);
+		const text = `<tag%attrs%/tag%>`
+			.replace("attrs%", attrs ? ` ${attrs}` : "")
+			.replace("tag%", tag);
+		if (!children) return text.replace("tag%", "");
+		return text.replace("/tag%", ">" + children + "</" + tag);
+	}
+	return transform(node, stringify);
+}
 
 module.exports = (template) => {
-	template = template?.trim();
 	template = template
+		.trim()
 		.replace(/^(\<template(.*))/, "")
 		.replace(/(\<\/template\>)$/g, "");
-
-	const root = parse(template);
-	function getProps(node) {
-		const state = {
-			directives: [],
-			class: [],
-			props: {},
-			domProps: {},
-			attrs: {},
-			scopedSlots: {},
-			style: [],
+	const root = parseTemplate(template);
+	const result = jsxify(root);
+	if (!result) {
+		return {
+			error: "Cannot transform template to JSX, please check your template",
+			code: null,
 		};
-		if (!node) return state;
-		(node.props || []).forEach((prop) => {
-			const { name } = prop;
-			const attrName = prop.name
-				.replace("v-bind:", "")
-				.replace("v-on:", "")
-				.trim();
-			const value =
-				typeof prop.value == "string" ? dJSON.parse(prop.value) : prop.value;
-			if (/v-on:/.test(prop.name)) {
-				const event = attrName.replace(/^[a-z]/, (t) => `on${t.toUpperCase()}`);
-				state.props[event] = value;
-			} else if (/v-bind:/.test(prop.name)) {
-				//  v-bind:style
-				//  v-bind:class
-				if (attrName == "style" || attrName == "class") {
-					state[attrName].push(value);
-				} else if (attrName == "ref") {
-					state.props.ref = JSON.parse(value.ref);
-					if (value.refInFor) state.props.refInFor = true;
-				}
-				//  v-bind:id ...
-				else {
-					state.props[attrName] = value;
-				}
-			}
-			//  v-bind="xx"
-			else if (/v-bind/.test(prop.name)) {
-				const json = dJSON.parse(value);
-				for (let key in json) {
-					state.props[key] = JSON.stringify(json[key]);
-				}
-			} else if (/v-html/.test(name)) {
-				state.domProps.innerHTML = value;
-			} else if (/v-text/.test(name)) {
-				state.domProps.textContent = value;
-			} else if (/v-show/.test(name)) {
-				state.style.push("{ display: " + value + " ? '' : 'none' }");
-			} else if (/v-model/.test(name)) {
-				state.directives.push({ name: "vModel", value });
-			}
-			//  directive
-			else if (/v-[a-zA-Z]/.test(name)) {
-				state.directives.push({ name, value });
-			} else if (name == "class") {
-				state.class.push(prop.value);
-			} else if (name == "style") {
-				state.style.push(prop.value);
-			} else {
-				state.attrs[name] = value;
-			}
-		});
-		const scopes = node.scopedSlots || {};
-		for (let key in scopes) {
-			const slot = scopes[key];
-			const slotScope = dJSON.parse(slot.slotScope || '"_"');
-			let nodes = transformChildren(slot, false, false);
-			if (nodes.length <= 0) {
-				nodes = null;
-			} else {
-				nodes = `[${nodes.map(parseText)}]`;
-			}
-			state.scopedSlots[key] = `(${slotScope})=>(${nodes})`;
-		}
-		return state;
 	}
-	function getAttributes(node) {
-		if (!node) return "";
-		const state = getProps(node);
-		const attributes = [];
-		let scopedSlots = "";
-		for (let key in state.scopedSlots) {
-			const slot = state.scopedSlots[key];
-			scopedSlots += `${key}:${slot},`;
-		}
-		if (scopedSlots) attributes.push(`scopedSlots= {{${scopedSlots}}}`);
-		if (state.style.length) attributes.push(`style={assign(${state.style})}`);
-		if (state.class.length) attributes.push(`class={assign(${state.class})}`);
-		//  props
-		if (Object.values(state.props).length) {
-			attributes.push(`props={${JSON.stringify(state.props)}}`);
-		}
-		//  attrs
-		for (const key in state.attrs) {
-			let value = state.attrs[key];
-			if (value == '""') {
-				value = true;
-			}
-			if (value != true) {
-				attributes.push(`${key}='${value}'`);
-			} else {
-				attributes.push(key);
-			}
-		}
-		if (Object.values(state.domProps).length > 0) {
-			attributes.push(`domProps={${JSON.stringify(state.domProps)}}`);
-		}
-		for (const { name, value } of state.directives) {
-			attributes.push(`${name}={${value}}`);
-		}
-		return attributes.join(" ");
-	}
-	function transformFor(node) {
-		const noIterator2 = node.iterator2 == undefined;
-		const noIterator1 = node.iterator1 == undefined;
-		const template = `{{for}.map((props,index)=>{{callback}})}`;
-		const alias = `var ${node.alias}  = props;`;
-		const iterator2 = (!noIterator2 && `var ${node.iterator2} = index;`) || "";
-		const iterator1 = (!noIterator1 && `var ${node.iterator1} = index;`) || "";
-		const tag = node.if ? transformIf(node, true) : generateJSXElement(node);
-		const fn = `{alias}\n{iterator1}\n{iterator2}\nreturn({tag})`
-			.replace("{alias}", alias)
-			.replace("{iterator1}", iterator1)
-			.replace("{iterator2}", iterator2)
-			.replace("{tag}", tag);
-		return template.replace(/\{for\}/g, node.for).replace(/\{callback\}/, fn);
-	}
-	function transformIf(node, ifInfor) {
-		const element = node.ifConditions
-			.map(({ block }) => block)
-			.map((block) => {
-				let cond = "";
-				if (block.if != null) cond = JSON.parse(block.if) + "?";
-				if (block.elseif != null) cond = ":" + JSON.parse(block.elseif) + "?";
-				if (block.else != null) cond = ":";
-				return cond + generateJSXElement(block);
-			})
-			.join("");
-		const children = node.ifConditions.length > 1 ? element : element + ":null";
-		return ifInfor ? children : `{${children}}`;
-	}
-	function generateJSXElement(node) {
-		if (node.tag != "template") {
-			const tag = camelize(node.tag);
-			const attributes = getAttributes(node);
-			const left = attributes ? `<${tag} ${attributes}>` : `<${tag}>`;
-			if (isUnaryTag(tag)) return left.replace(">", "/>");
-			const children = transformChildren(node);
-			return `${left}${children || ""}</${tag}>`;
-		}
-		return transformChildren(node);
-	}
-	function transformNode(node) {
-		if (!node) return null;
-		if (typeof node == "string") return removeTextTag(node);
-		if (node.type == 1) {
-			if (!node.tag) return null;
-			if (node.tag == "slot") return transformSlot(node);
-			if (node.tag == "template" && !node.if) return transformChildren(node);
-		}
-		if (node.type == 2) return removeTextTag(node.text);
-		if (node.type == 3) return removeTextTag(node.text);
-		if (node.for) return transformFor(node);
-		if (node.if) return transformIf(node);
-		return generateJSXElement(node);
-	}
-	function transformChildren(node, root = false, toString = true) {
-		const children = ((root ? [node] : node.children) || []).map(transformNode);
-		if (!toString) return children.filter(Boolean);
-		return children.join("") || null;
-	}
-	function transformSlot(node) {
-		const { props } = getProps(node);
-		const name = props.name ?? '"default"';
-		delete props.name;
-		const children = transformChildren(node);
-		const stringifyProps = JSON.stringify(props);
-		return `{$scopedSlots[${name}](${stringifyProps})||${children}}`.trim();
-	}
-	const string = transformChildren(root, true);
-	const code = `${assign}\n ${string}`;
-	const jsx = prettier.format(code, { parser: "babel" });
-	return { code: jsx, template: template };
+	const code = prettier.format(result, { parser: "babel" });
+	return { code: code, error: null };
 };
